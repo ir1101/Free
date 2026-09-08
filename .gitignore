@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+build/
+dist/
+
+# Analysis cache and rendered sets - large, regenerable, keep out of OneDrive sync
+.automix/
+*.wav
+*.flac
