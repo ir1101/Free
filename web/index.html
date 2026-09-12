@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AutoMix</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <h1>AutoMix</h1>
+    <p class="sub">Analyse a folder, order it into a set, and hear every join.</p>
+  </header>
+
+  <section class="panel">
+    <div class="row">
+      <input id="folder" type="text" spellcheck="false"
+             placeholder="C:\Users\you\Music  -  paste a folder of audio files">
+      <button id="scan" class="primary">Analyse</button>
+      <label class="check"><input id="refresh" type="checkbox"> ignore cache</label>
+    </div>
+    <div id="scan-status" class="status"></div>
+  </section>
+
+  <main>
+    <section class="panel" id="library-panel" hidden>
+      <div class="panel-head">
+        <h2>Library <span id="library-count" class="count"></span></h2>
+        <div class="head-actions">
+          <button id="select-all" class="ghost">All</button>
+          <button id="select-none" class="ghost">None</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="library">
+          <thead>
+            <tr>
+              <th class="tick"></th><th>Track</th><th class="num">BPM</th>
+              <th>Key</th><th class="num">Energy</th><th>Confidence</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" id="controls-panel" hidden>
+      <div class="panel-head"><h2>Set shape</h2></div>
+      <div class="controls">
+        <div class="control">
+          <label for="arc">Energy arc</label>
+          <select id="arc">
+            <option value="peak">Peak — warm up, build, come down</option>
+            <option value="flat">Flat — smoothest possible chain</option>
+          </select>
+        </div>
+        <div class="control">
+          <label for="bars">Crossfade length</label>
+          <select id="bars">
+            <option value="8">8 bars</option>
+            <option value="16" selected>16 bars</option>
+            <option value="32">32 bars</option>
+          </select>
+        </div>
+        <div class="weights" id="weights"></div>
+      </div>
+      <button id="build" class="primary wide">Build the set</button>
+      <div id="build-status" class="status"></div>
+    </section>
+
+    <section class="panel" id="set-panel" hidden>
+      <div class="panel-head">
+        <h2>The set</h2>
+        <div id="set-summary" class="count"></div>
+      </div>
+      <canvas id="timeline" height="150"></canvas>
+      <div class="legend">
+        <span><i class="swatch track"></i>track</span>
+        <span><i class="swatch overlap"></i>crossfade</span>
+        <span><i class="swatch energy"></i>actual energy</span>
+        <span><i class="swatch target"></i>target arc</span>
+      </div>
+
+      <div class="transport">
+        <button id="play" class="primary">Play</button>
+        <button id="prev-tr" class="ghost">&#9664; transition</button>
+        <button id="next-tr" class="ghost">transition &#9654;</button>
+        <span id="clock" class="clock">0:00 / 0:00</span>
+        <input id="seek" type="range" min="0" max="1000" value="0">
+        <label class="vol">vol <input id="volume" type="range" min="0" max="100" value="90"></label>
+      </div>
+      <div id="play-status" class="status"></div>
+    </section>
+
+    <section class="panel" id="inspector-panel" hidden>
+      <div class="panel-head">
+        <h2>Transition inspector</h2>
+        <div id="inspector-nav" class="chips"></div>
+      </div>
+      <div id="inspector"></div>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
