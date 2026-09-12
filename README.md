@@ -1,133 +1,179 @@
 # AutoMix
 
-Analyses a folder of music, works out the order that flows best, and beat-matches
-the tracks into one continuous mix — in the browser, live, or rendered to a file.
+Point it at a folder of music. It works out the order the tracks flow best in,
+beat-matches them, and plays the whole thing as one continuous mix.
 
-"Smooth" here is not a fade. It is four things happening at once:
+Analysis, ordering, crossfading and rendering all happen on the server; the
+browser receives one continuous audio stream and draws it.
 
-| | |
-|---|---|
-| **Tempos matched** | the incoming track is rate-matched to the outgoing one for the length of the overlap |
-| **Downbeats aligned** | everything is cut and joined on bars, never on arbitrary seconds |
-| **Keys compatible** | ordering uses the Camelot wheel, so consecutive tracks are harmonically related |
-| **Loudness held** | an equal-power crossfade, so the middle of the blend doesn't sag |
+The page is a single view: a nav bar, a full-window wave field that moves with
+the music, and a transport with previous / play-pause / next, a seek bar and a
+tracklist.
 
 ---
 
-## Quick start
+## Run it
 
 ```bash
 pip install -e .
 ```
 
+Drop audio into `music/` (or pass a path), then:
+
 ```bash
 automix serve
 ```
 
-Then open <http://127.0.0.1:8420>, paste in a folder of audio files, and press
-Analyse. When it finishes, press **Build the set** — then **transition ▶** to jump
-straight to a join and hear whether it works.
-
-Or from the command line:
+Open <http://127.0.0.1:8420> and press play.
 
 ```bash
-automix analyze "C:/Users/you/Music"
+automix serve "C:/Users/you/Music"
 ```
 
-```bash
-automix render "C:/Users/you/Music" --out set.wav
-```
+First analysis costs ~10-25 s per track depending on length. Results are cached
+under `.automix/cache`, so everything after the first pass starts immediately.
 
-First analysis costs a few seconds per track. Results are cached under
-`.automix/cache`, so everything after the first pass is instant.
+**Adding music while it is running** — drop files in and the page notices within
+a few seconds. If nothing is playing it rebuilds the set straight away; if you
+are mid-track it offers the rebuild in the nav rather than cutting the music off.
+Only the new files cost analysis time; the rest come from cache. Removing or
+replacing a file is picked up the same way.
+
+---
+
+## What "a good transition" means here
+
+Twelve things are measured for every candidate pair, always comparing the
+**outgoing track's outro against the incoming track's intro** — never the two
+track averages. A record that ends sparse and quiet wants following with one
+that starts sparse and quiet, whatever either averages to across four minutes.
+
+| | |
+|---|---|
+| `tempo` | can they be beat-matched without artefacts (half/double time included) |
+| `harmonic` | do the keys agree, on the Camelot wheel |
+| `rhythm` | do the grooves agree — where the hits land inside the bar |
+| `energy` | does the incoming track pick up where the outgoing one left off |
+| `loudness` | will there be an audible step in level |
+| `brightness` | does the tone balance jump |
+| `timbre` | do they sound like the same set |
+| `bass` | will two heavy low ends collide |
+| `voice` | will two vocals talk over each other |
+| `crest` | does punchy meet squashed |
+| `pulse` | is there a clear enough beat on both sides to lock to |
+| `arc` | is this track the right intensity for *this point* in the set |
+
+Three of these deserve a note:
+
+- **`rhythm` is measured twice**, full-band and low-band. Spectral flux follows
+  brightness, so on a plain four-to-the-floor loop the off-beat hats take ~76% of
+  the weight and the kick only 20%. A groove described that way is really a
+  description of the hats, and two records with clashing kicks would look
+  compatible. The kick gets its own band and the larger share of the vote.
+- **`bass` and `voice` are products, not differences.** Two sparse basslines
+  overlap happily; so do a heavy one and a sparse one — the bass swap exists to
+  hand the low end over. Only two dense low ends at once is unrecoverable.
+- **`harmonic` is scaled by detector confidence.** Key detection is not reliable
+  on every record, and enforcing a harmonic rule derived from a coin-flip reading
+  is worse than letting the other eleven components decide.
+
+Weights are tunable per component: `automix serve --w-voice 2.0 --w-harmonic 0.5`.
 
 ---
 
 ## How it works
 
-### 1. Analysis — `automix/analysis/`
+### Analysis — `automix/analysis/`
 
-**Beat grid.** `librosa`'s beat tracker gives a rough tempo, but its tempogram is
-coarse — it will call 128 BPM "129.2", and a 1% tempo error accumulates into a
-whole beat of drift across a 32-bar transition. So the reported tempo is only a
-starting guess. The real grid comes from snapping predicted beats onto onset
-peaks and least-squares fitting a regular grid through them, which lands within
-**0.015 BPM** on material of known tempo.
+Every expensive step (STFT, harmonic separation, chroma, MFCC) is computed once
+into a shared `AnalysisContext` and read by all the extractors, rather than each
+module recomputing its own.
 
-Three details in there matter more than they look:
+**Beat grid.** `librosa`'s tempogram is coarse — it will call 128 BPM "129.2",
+and a 1% error accumulates into a whole beat of drift across a 32-bar
+transition. So its estimate is only a starting guess; the real grid comes from
+snapping predicted beats onto onset peaks and least-squares fitting. That lands
+within **0.015 BPM**.
 
-- The onset envelope used for snapping is weighted towards **low frequencies**.
-  Plain spectral flux responds to brightness, so a hi-hat out-peaks a kick drum
-  and the grid locks half a beat off, onto the off-beats.
-- The phase is aligned by sweeping a **whole beat period** before any local
-  refinement. Local snapping can only correct a beat by less than its search
-  window, so it cannot rescue a grid that starts out half a beat wrong.
+Three details matter more than they look:
+
+- The onset envelope used for snapping is weighted towards **low frequencies**,
+  or a hi-hat out-peaks the kick and the grid locks half a beat off.
+- Phase is aligned by sweeping a **whole beat period** first. Local snapping can
+  only correct by less than its window, so it cannot rescue a grid that starts
+  half a beat wrong.
 - Half- and double-time are separated **by evidence**, not by a plausible-BPM
   range: 90 and 180 are both ordinary tempos. The decider is whether the
   midpoints between beats are struck as hard as the beats.
 
-**Key.** Chroma matched against the Krumhansl-Kessler profiles, then mapped to
-Camelot codes. Chroma is taken from the **chord register only** (from C3 up) —
-the default range starts low enough to let the kick drum vote, and a kick tuned
-near F♯ will tilt every track on the record towards F♯.
+**Key.** Chroma against the Krumhansl-Kessler profiles, mapped to Camelot codes.
+Taken from the **chord register only** (C3 up) — the default range lets the kick
+drum vote, and a kick tuned near F♯ tilts the whole record towards F♯.
 
-**Cue points.** Beat-synchronous features are clustered into sections, and energy
-decides which boundaries are worth cueing to: `mix_in` where the track gets
-going, `mix_out` where it thins out. Both snapped to downbeats.
+**Cue points.** Beat-synchronous features clustered into sections; energy picks
+which boundaries are worth cueing to. Both snapped to downbeats.
 
-### 2. The model — `automix/model/`
+### Ordering — `automix/model/`
 
-Each candidate join scores five components:
+A minimum-cost Hamiltonian path: exact via Held-Karp up to 12 tracks, then
+nearest-neighbour plus local search.
 
-| component | question |
-|---|---|
-| `tempo` | can they be beat-matched without artefacts? (half/double time considered) |
-| `harmonic` | do the keys agree, on the Camelot wheel? |
-| `energy` | does the incoming track pick up where the outgoing one left off? |
-| `timbre` | do they sound like the same set? |
-| `arc` | is this track the right intensity for *this point* in the set? |
+The cost is **asymmetric** (A→B is not B→A) and **position-dependent** (the arc),
+which rules out 2-opt — it works by reversing a segment, and a reversed edge does
+not cost what the original did. The local search uses Or-opt and swap instead,
+neither of which ever reverses an edge.
 
-Energy and timbre compare **A's outro against B's intro**, not the two track
-averages. A record that ends quiet wants following with one that starts quiet,
-whatever either averages to.
+### Transitions — `automix/render/`
 
-Ordering is a minimum-cost Hamiltonian path — exact via Held-Karp up to 12
-tracks, then nearest-neighbour plus local search. The cost is **asymmetric**
-(A→B is not B→A) and **position-dependent** (the arc), which rules out 2-opt:
-it works by reversing a segment, and a reversed edge does not cost what the
-original did. The local search uses Or-opt and swap instead, neither of which
-ever reverses an edge.
-
-### 3. Transitions — `automix/render/`
-
-- **Equal-power gain**, `cos`/`sin` quarter-cycles, so `a² + b² = 1` throughout.
-  A linear crossfade drops 3 dB at its midpoint; that sag is most of what makes
-  an amateur mix sound amateur.
-- **Bass swap.** Two kicks and two basslines at once is mud. The incoming track's
-  low band is held down and handed over at the midpoint, so one track owns the
-  bottom end at any moment. Implemented as a gain on a split band rather than a
-  time-varying shelf, so at unity it is exactly a no-op.
+- **Equal-power gain**, so `a² + b² = 1` throughout. A linear crossfade drops
+  3 dB at its midpoint; that sag is most of what makes an amateur mix sound
+  amateur.
+- **Bass swap.** The incoming track's low band is held down and handed over at
+  the midpoint, so one track owns the bottom end at any moment. Implemented as a
+  gain on a split band, so at unity it is exactly a no-op.
 - **The fade ends on `mix_out`, it does not start there.** That cue marks where
   the arrangement thins into an outro; a fade beginning on it spends its first
   half with the outgoing track already stripped back and the incoming one still
   turned down — a measurable hole in the middle of the blend.
+- Tempo is matched by **playback rate**, so pitch moves with speed like a
+  turntable. Only the *incoming* track is bent, and only for the overlap; locking
+  the whole set to the first track compounds into a 30% stretch by the fifth
+  record.
 
-### 4. One plan, two engines — `automix/model/plan.py`
+### The page — `web/`
 
-Sequencing produces a `SetPlan` carrying absolute times and explicit automation
-curves. Both the browser and the offline renderer consume that same plan, rather
-than each re-deriving timing from the same inputs and drifting apart.
+`index.html` and `field.js`, no build step.
 
-Tempo matching is by **playback rate** on both sides — resampling offline,
-`playbackRate` in the browser — so pitch moves with speed, exactly as a turntable
-does. A phase vocoder would hold pitch, but then the exported file would not
-match what you auditioned, and the cost model already keeps stretches inside
-about 6%, where the shift is under a semitone.
+The **wave field** is a bundle of thin lines sharing one travelling waveform,
+each offset slightly from the next. Where that offset is squeezed the lines
+converge into a dark seam; where it opens they fan into a ribbon. Two such
+ribbons run at different rates so their seams drift in and out of phase and
+cross — one bundle alone reads as a plain wavy band.
 
-Each track plays at its own tempo for its whole body; only the **incoming** track
-is bent, and only for the overlap, easing back once it is alone. Locking the
-whole set to the first track compounds — by the fifth record you are asking for a
-30% stretch.
+Audio drives it through three bands rather than one level, because they want to
+do different things: bass moves the slow body of the wave, mids open and close
+the bundle, treble adds ripple along each strand. A single amplitude would just
+make the whole thing pump. The cursor drags the field toward it, and clicking
+sends a ring outwards.
+
+Skipping tracks is a `from=` on the stream, not a seek: the mix is generated on
+demand, so starting elsewhere is simply a new request. Jumping to a track lands
+at the *start of the crossfade into it*, so you hear it mix in rather than
+arriving mid-track.
+
+### Streaming — `automix/render/stream.py`
+
+The mix is generated as it is consumed, at ~100× realtime, so there is no wait
+for a render and no giant temporary file.
+
+- **Whole segments, not windows.** The bass swap's zero-phase filter would leave
+  a click at every window boundary. Only ~3 segments are ever live at once, so
+  memory stays flat however long the set is.
+- **A look-ahead limiter**, because a stream cannot peak-normalise — it has not
+  seen the end yet. Two equal-power crossfades summing at once reached 1.17 of
+  full scale on the test set.
+- **A real `Content-Length`**, since the plan fixes the duration in advance.
+  Without it the player reports an infinite duration.
 
 ---
 
@@ -142,14 +188,15 @@ Against synthetic tracks of known tempo, key and arrangement:
 | Cue points | exact to the bar |
 | Key | 20/24 exact, 23/24 correct Camelot number |
 | Crossfade | `a² + b² = 1` to machine precision |
-
-And on a rendered mix, measured from the audio itself: loudness dips **1.2 dB**
-through each crossfade (a linear fade would be 3.0), the beat stays coherent to
-**0.02 BPM** with 0.97 grid confidence, and the bass does not double up.
+| Stream vs offline render | identical, **0.00e+00** over 12.4M frames |
+| Loudness through a crossfade | dips **1.2 dB** (a linear fade dips 3.0) |
+| Beat coherence through a fade | 126.02 vs 126.00 BPM, 0.97 grid confidence |
 
 ```bash
 python -m pytest
 ```
+
+111 tests.
 
 ---
 
@@ -157,24 +204,24 @@ python -m pytest
 
 | | |
 |---|---|
-| `automix analyze <folder>` | analyse and print what was found |
-| `automix plan <folder>` | order a set, show every transition and why it scored as it did |
-| `automix render <folder> --out set.wav` | render the mix to a file |
-| `automix serve` | run the web app |
+| `automix serve [folder]` | play the folder as a continuous mix (default: `music/`) |
 
-`plan` and `render` take `--arc peak\|flat`, `--bars 8\|16\|32`, and a weight per
-component (`--w-harmonic 2.0` to insist on key matching, and so on).
+Keyboard: space toggles playback, escape closes the tracklist, arrow keys seek
+when the bar has focus.
+| `automix analyze <folder>` | analyse and print what was found |
+| `automix plan <folder>` | show the running order and why each join scored as it did |
+| `automix render <folder> --out set.wav` | render the mix to a file |
+
+`plan`, `render` and `serve` take `--arc peak|flat`, `--bars 8|16|32`, and a
+weight per component.
 
 ---
 
 ## Notes
 
-- **No ffmpeg needed.** `soundfile` bundles libsndfile, which reads wav, flac,
-  ogg and mp3. Exotic formats fall back to librosa, which will use ffmpeg if it
-  is installed.
+- **No ffmpeg needed.** `soundfile` reads wav, flac, ogg and mp3. Exotic formats
+  fall back to librosa, which uses ffmpeg if present.
 - **Key detection is not exact on every track.** Misses land on the relative
-  major/minor or one step around the wheel — both of which still mix — but it is
-  worth a glance at the confidence bars in the library view.
-- **This project lives in a OneDrive folder.** `.automix/` (cache and renders) is
-  in `.gitignore`; consider excluding it from sync too, or every render kicks off
-  a large upload.
+  major/minor or one step around the wheel — both of which still mix.
+- **`music/` and `.automix/` are gitignored.** This project sits in a OneDrive
+  folder; consider excluding them from sync too.

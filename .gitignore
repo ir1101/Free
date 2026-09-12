@@ -10,3 +10,6 @@ dist/
 .automix/
 *.wav
 *.flac
+
+# Audio you drop in to play; not source
+music/

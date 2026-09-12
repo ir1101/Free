@@ -133,4 +133,5 @@ def test_track_roundtrips_through_json(synth_track):
     assert again.bpm == pytest.approx(track.bpm, abs=1e-3)
     assert again.key == track.key
     assert again.structure.mix_in == pytest.approx(track.structure.mix_in, abs=1e-3)
-    assert np.allclose(again.timbre_in, track.timbre_in, atol=1e-3)
+    assert np.allclose(again.head.timbre, track.head.timbre, atol=1e-3)
+    assert np.allclose(again.tail.rhythm, track.tail.rhythm, atol=1e-3)

@@ -1,106 +1,470 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AutoMix</title>
-  <link rel="stylesheet" href="styles.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoMix</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --paper: #0a0a0c;              /* matches BACKGROUND in field.js */
+    --paper-2: rgba(255, 255, 255, 0.07);
+    --ink: #edecf2;
+    --muted: #8b8a97;
+    --hair: rgba(255, 255, 255, 0.14);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+  }
+
+  /* The field fills the window; everything else floats over it. */
+  #field { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+  /* ---------------------------------------------------------------- nav */
+  nav {
+    position: fixed; inset: 0 0 auto 0; z-index: 3;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 1rem; padding: 0.9rem 1.4rem;
+    border-bottom: 1px solid var(--hair);
+    background: linear-gradient(var(--paper) 45%, rgba(10, 10, 12, 0));
+  }
+  .brand { font-weight: 600; letter-spacing: 0.24em; text-transform: uppercase; font-size: 0.8rem; }
+  .brand span { color: var(--muted); font-weight: 400; text-transform: none;
+                letter-spacing: 0.04em; }
+  .nav-right { display: flex; align-items: center; gap: 1.1rem; }
+  .meta { color: var(--muted); font-size: 0.76rem; letter-spacing: 0.06em;
+          font-variant-numeric: tabular-nums; }
+
+  button {
+    font: inherit; color: var(--ink); background: none; border: none;
+    cursor: pointer; padding: 0;
+  }
+  button:disabled { opacity: 0.3; cursor: default; }
+  .link {
+    font-size: 0.76rem; letter-spacing: 0.14em; text-transform: uppercase;
+    padding: 0.35rem 0.7rem; border: 1px solid var(--hair); border-radius: 2px;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .link:hover:not(:disabled) { background: var(--paper-2); border-color: rgba(255,255,255,0.34); }
+  .link[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  #rescan { border-color: rgba(255,255,255,0.42); }
+  #rescan::before { content: "+"; margin-right: 0.4rem; font-weight: 600; }
+
+  /* ---------------------------------------------------------- transport */
+  .transport {
+    position: fixed; inset: auto 0 0 0; z-index: 3;
+    padding: 1.1rem 1.4rem 1.4rem;
+    background: linear-gradient(rgba(10, 10, 12, 0), var(--paper) 42%);
+  }
+  .track-line { text-align: center; margin-bottom: 0.7rem; min-height: 2.9rem; }
+  #title { font-size: 1.5rem; font-weight: 500; letter-spacing: -0.01em; }
+  #detail { color: var(--muted); font-size: 0.8rem; margin-top: 0.15rem; }
+
+  #bar {
+    position: relative; height: 22px; cursor: pointer;
+    display: flex; align-items: center; margin: 0 auto 0.7rem; max-width: 720px;
+  }
+  #bar::before { content: ""; position: absolute; inset: 10px 0 auto; height: 2px;
+                 background: var(--hair); }
+  #fill { position: absolute; left: 0; top: 10px; height: 2px; background: var(--ink); width: 0; }
+  #bar:hover #head { box-shadow: 0 0 8px rgba(237, 236, 242, 0.8); }
+  #head { position: absolute; top: 5px; width: 2px; height: 12px; background: var(--ink);
+          left: 0; transition: opacity 0.15s; }
+
+  .controls { display: flex; align-items: center; justify-content: center; gap: 1.6rem; }
+  .ctl { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%;
+         transition: background 0.15s; }
+  .ctl:hover:not(:disabled) { background: var(--paper-2); }
+  .ctl svg { width: 20px; height: 20px; fill: var(--ink); }
+  #play { width: 56px; height: 56px; border: 1px solid var(--ink); }
+  #play svg { width: 22px; height: 22px; }
+  #play .pause, #play.playing .play { display: none; }
+  #play.playing .pause { display: block; }
+  .times { display: flex; justify-content: space-between; max-width: 720px; margin: 0 auto;
+           color: var(--muted); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+
+  /* ---------------------------------------------------------- tracklist */
+  #list {
+    position: fixed; top: 0; right: 0; bottom: 0; width: min(400px, 88vw); z-index: 4;
+    /* Opaque rather than translucent-and-blurred: the panel sits over a moving
+       canvas, where a backdrop blur is both the most expensive thing on the page
+       and unreliably composited, for an effect invisible behind a near-solid
+       fill. A flat ground also keeps the track titles legible. */
+    background: #17171c;
+    border-left: 1px solid rgba(255, 255, 255, 0.22);
+    /* Lifted clearly off the near-black field. At only a shade above the page
+       colour the panel read as a hole rather than a surface, with nothing but a
+       hairline to say where it began. */
+    box-shadow: -24px 0 48px rgba(0, 0, 0, 0.65);
+    transform: translateX(100%); transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex; flex-direction: column;
+  }
+  #list.open { transform: none; }
+  .list-head { display: flex; align-items: center; justify-content: space-between;
+               padding: 1.15rem 1.3rem; border-bottom: 1px solid var(--hair);
+               font-size: 0.76rem; letter-spacing: 0.16em; text-transform: uppercase; }
+  .list-body { overflow-y: auto; padding: 0.5rem 0; }
+  .row {
+    display: grid; grid-template-columns: 1.6rem 1fr auto; gap: 0.8rem; align-items: baseline;
+    width: 100%; text-align: left; padding: 0.7rem 1.3rem; cursor: pointer;
+  }
+  .row:hover { background: rgba(255, 255, 255, 0.06); }
+  .row.active { background: rgba(255, 255, 255, 0.09); }
+  .row.active .row-title { font-weight: 600; }
+  .row-num { color: var(--muted); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
+  .row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row-sub { color: var(--muted); font-size: 0.72rem; margin-top: 0.1rem; }
+  .row-time { color: var(--muted); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+
+  #status { position: fixed; left: 0; right: 0; top: 50%; z-index: 2; text-align: center;
+            color: var(--muted); font-size: 0.85rem; pointer-events: none; }
+  #status.error { color: #ff6b7a; }
+
+  @media (max-height: 520px) {
+    #title { font-size: 1.1rem; }
+    .track-line { min-height: 2.2rem; margin-bottom: 0.4rem; }
+    #play { width: 44px; height: 44px; }
+  }
+</style>
 </head>
 <body>
-  <header>
-    <h1>AutoMix</h1>
-    <p class="sub">Analyse a folder, order it into a set, and hear every join.</p>
-  </header>
+  <canvas id="field"></canvas>
 
-  <section class="panel">
-    <div class="row">
-      <input id="folder" type="text" spellcheck="false"
-             placeholder="C:\Users\you\Music  -  paste a folder of audio files">
-      <button id="scan" class="primary">Analyse</button>
-      <label class="check"><input id="refresh" type="checkbox"> ignore cache</label>
+  <nav>
+    <div class="brand">AutoMix <span id="folder"></span></div>
+    <div class="nav-right">
+      <span class="meta" id="setinfo"></span>
+      <button class="link" id="rescan" hidden></button>
+      <button class="link" id="toggle-list" aria-pressed="false" disabled>Tracklist</button>
     </div>
-    <div id="scan-status" class="status"></div>
-  </section>
+  </nav>
 
-  <main>
-    <section class="panel" id="library-panel" hidden>
-      <div class="panel-head">
-        <h2>Library <span id="library-count" class="count"></span></h2>
-        <div class="head-actions">
-          <button id="select-all" class="ghost">All</button>
-          <button id="select-none" class="ghost">None</button>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table id="library">
-          <thead>
-            <tr>
-              <th class="tick"></th><th>Track</th><th class="num">BPM</th>
-              <th>Key</th><th class="num">Energy</th><th>Confidence</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
+  <div id="status">Preparing the set…</div>
 
-    <section class="panel" id="controls-panel" hidden>
-      <div class="panel-head"><h2>Set shape</h2></div>
-      <div class="controls">
-        <div class="control">
-          <label for="arc">Energy arc</label>
-          <select id="arc">
-            <option value="peak">Peak — warm up, build, come down</option>
-            <option value="flat">Flat — smoothest possible chain</option>
-          </select>
-        </div>
-        <div class="control">
-          <label for="bars">Crossfade length</label>
-          <select id="bars">
-            <option value="8">8 bars</option>
-            <option value="16" selected>16 bars</option>
-            <option value="32">32 bars</option>
-          </select>
-        </div>
-        <div class="weights" id="weights"></div>
-      </div>
-      <button id="build" class="primary wide">Build the set</button>
-      <div id="build-status" class="status"></div>
-    </section>
+  <div class="transport">
+    <div class="track-line">
+      <div id="title"></div>
+      <div id="detail"></div>
+    </div>
 
-    <section class="panel" id="set-panel" hidden>
-      <div class="panel-head">
-        <h2>The set</h2>
-        <div id="set-summary" class="count"></div>
-      </div>
-      <canvas id="timeline" height="150"></canvas>
-      <div class="legend">
-        <span><i class="swatch track"></i>track</span>
-        <span><i class="swatch overlap"></i>crossfade</span>
-        <span><i class="swatch energy"></i>actual energy</span>
-        <span><i class="swatch target"></i>target arc</span>
-      </div>
+    <div id="bar" role="slider" aria-label="Seek" tabindex="0"
+         aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div id="fill"></div><div id="head"></div>
+    </div>
+    <div class="times"><span id="elapsed">0:00</span><span id="total">0:00</span></div>
 
-      <div class="transport">
-        <button id="play" class="primary">Play</button>
-        <button id="prev-tr" class="ghost">&#9664; transition</button>
-        <button id="next-tr" class="ghost">transition &#9654;</button>
-        <span id="clock" class="clock">0:00 / 0:00</span>
-        <input id="seek" type="range" min="0" max="1000" value="0">
-        <label class="vol">vol <input id="volume" type="range" min="0" max="100" value="90"></label>
-      </div>
-      <div id="play-status" class="status"></div>
-    </section>
+    <div class="controls" style="margin-top:0.6rem">
+      <button class="ctl" id="prev" aria-label="Previous track" disabled>
+        <svg viewBox="0 0 24 24"><path d="M7 6h2v12H7zm10 0v12l-8-6z"/></svg>
+      </button>
+      <button class="ctl" id="play" aria-label="Play" disabled>
+        <svg class="play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        <svg class="pause" viewBox="0 0 24 24"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>
+      </button>
+      <button class="ctl" id="next" aria-label="Next track" disabled>
+        <svg viewBox="0 0 24 24"><path d="M15 6h2v12h-2zM7 6l8 6-8 6z"/></svg>
+      </button>
+    </div>
+  </div>
 
-    <section class="panel" id="inspector-panel" hidden>
-      <div class="panel-head">
-        <h2>Transition inspector</h2>
-        <div id="inspector-nav" class="chips"></div>
-      </div>
-      <div id="inspector"></div>
-    </section>
-  </main>
+  <aside id="list" aria-hidden="true">
+    <div class="list-head"><span>Running order</span>
+      <button class="link" id="close-list">Close</button></div>
+    <div class="list-body" id="rows"></div>
+  </aside>
 
-  <script type="module" src="app.js"></script>
+  <audio id="audio" preload="none"></audio>
+
+<script type="module">
+import { WaveField } from './field.js';
+
+const el = (id) => document.getElementById(id);
+const audio = el('audio');
+
+const state = {
+  plan: null,          // running order from the server
+  duration: 0,
+  streamStart: 0,      // set-time the current stream request began at
+  current: -1,
+};
+
+const fmt = (s) => {
+  if (!isFinite(s) || s < 0) s = 0;
+  return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+};
+const say = (msg, bad = false) => {
+  el('status').textContent = msg || '';
+  el('status').classList.toggle('error', !!bad);
+};
+
+/* The stream is rendered on demand from wherever it is asked to start, so the
+   element's own clock is relative to that point, not to the set. */
+const setTime = () => state.streamStart + (audio.currentTime || 0);
+
+/* ------------------------------------------------------------ visualiser */
+
+const field = new WaveField(el('field'));
+field.start();
+
+// Handy from the console: inspect band levels, the plan, and playback state.
+window.__automix = { field, state, audio };
+
+let ctx = null, analyser = null;
+
+function connectAnalyser() {
+  if (analyser) return;
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const src = ctx.createMediaElementSource(audio);
+  analyser = ctx.createAnalyser();
+  analyser.fftSize = 2048;
+  analyser.smoothingTimeConstant = 0.75;
+  // The element's audio now flows through the graph, so it has to be routed on
+  // to the speakers explicitly - tapping it is not a passive read.
+  src.connect(analyser).connect(ctx.destination);
+  field.listenTo(analyser);
+  window.__automix.ctx = ctx;
+}
+
+/* ------------------------------------------------------------- playback */
+
+async function playFrom(seconds, keepPlaying = true) {
+  state.streamStart = Math.max(0, Math.min(seconds, Math.max(0, state.duration - 1)));
+  audio.src = `/stream?start=${state.streamStart.toFixed(3)}`;
+  // Deliberately no load() here. The element is preload="none", so the request
+  // only goes out when playback actually starts - and every request makes the
+  // server begin rendering a mix from that point, which is not work to spend on
+  // a position the listener may never play.
+  if (!keepPlaying) return;
+  try {
+    connectAnalyser();
+    if (ctx && ctx.state === 'suspended') await ctx.resume();
+    await audio.play();
+    setPlayingUI(true);
+    say('');
+  } catch (err) {
+    setPlayingUI(false);
+    say(err.message, true);
+  }
+}
+
+function setPlayingUI(on) {
+  el('play').classList.toggle('playing', on);
+  el('play').setAttribute('aria-label', on ? 'Pause' : 'Play');
+  field.setActive(on);
+}
+
+async function toggle() {
+  if (audio.paused) {
+    if (!audio.src) return playFrom(0);
+    try {
+      connectAnalyser();
+      if (ctx && ctx.state === 'suspended') await ctx.resume();
+      await audio.play();
+      setPlayingUI(true);
+    } catch (err) { say(err.message, true); }
+  } else {
+    audio.pause();
+    setPlayingUI(false);
+  }
+}
+
+const skip = (delta) => {
+  if (!state.plan) return;
+  const target = Math.max(0, Math.min(state.plan.length - 1, currentIndex() + delta));
+  playFrom(state.plan[target].cue, true);
+};
+
+function currentIndex() {
+  const t = setTime();
+  if (!state.plan) return 0;
+  let idx = 0;
+  state.plan.forEach((s, i) => { if (t >= s.start - 0.001) idx = i; });
+  return idx;
+}
+
+/* ----------------------------------------------------------- now playing */
+
+function describe(t) {
+  const tracks = state.plan || [];
+  if (!tracks.length) return { title: '', detail: '' };
+  const seg = tracks[currentIndex()];
+  const tr = (state.transitions || []).find((x) => t >= x.start && t < x.start + x.duration);
+  if (tr) {
+    const nxt = tracks[tr.to];
+    const left = Math.max(0, Math.ceil(tr.start + tr.duration - t));
+    return {
+      title: seg.title,
+      detail: `mixing into ${nxt.title} · ${nxt.bpm} BPM · ${nxt.key}`
+              + (tr.label ? ` · ${tr.label}` : '') + ` · ${left}s`,
+    };
+  }
+  return { title: seg.title, detail: `${seg.bpm} BPM · ${seg.key}` };
+}
+
+function refresh() {
+  if (!state.plan) return;   // torn down for a rebuild; waitForSet restarts this
+  const t = setTime();
+  const { title, detail } = describe(t);
+  if (el('title').textContent !== title) el('title').textContent = title;
+  if (el('detail').textContent !== detail) el('detail').textContent = detail;
+
+  const pct = state.duration ? Math.min(100, (t / state.duration) * 100) : 0;
+  el('fill').style.width = `${pct}%`;
+  el('head').style.left = `${pct}%`;
+  el('bar').setAttribute('aria-valuenow', Math.round(pct));
+  el('elapsed').textContent = fmt(t);
+
+  const idx = currentIndex();
+  if (idx !== state.current) {
+    state.current = idx;
+    [...el('rows').children].forEach((row, i) => row.classList.toggle('active', i === idx));
+    el('prev').disabled = idx <= 0;
+    el('next').disabled = idx >= state.plan.length - 1;
+    field.bump();  // a visible kick when the track changes
+  }
+  requestAnimationFrame(refresh);
+}
+
+/* ------------------------------------------------------------- tracklist */
+
+function renderList() {
+  el('rows').innerHTML = state.plan.map((s, i) => `
+    <button class="row" data-i="${i}">
+      <span class="row-num">${String(i + 1).padStart(2, '0')}</span>
+      <span>
+        <span class="row-title">${s.title}</span>
+        <span class="row-sub">${s.bpm} BPM · ${s.key}</span>
+      </span>
+      <span class="row-time">${fmt(s.cue)}</span>
+    </button>`).join('');
+  [...el('rows').children].forEach((row) =>
+    row.addEventListener('click', () => {
+      playFrom(state.plan[+row.dataset.i].cue, true);
+      showList(false);
+    }));
+}
+
+const showList = (on) => {
+  el('list').classList.toggle('open', on);
+  el('list').setAttribute('aria-hidden', String(!on));
+  el('toggle-list').setAttribute('aria-pressed', String(on));
+};
+
+/* ------------------------------------------------------------------ boot */
+
+async function waitForSet() {
+  try {
+    const s = await (await fetch('/api/status')).json();
+    if (s.error) return say(s.error, true);
+    if (!s.ready) {
+      say(s.total ? `Analysing ${Math.min(s.done + 1, s.total)} of ${s.total} — ${s.current || ''}`
+                  : 'Looking for tracks…');
+      return setTimeout(waitForSet, 700);
+    }
+
+    const plan = await (await fetch('/api/plan')).json();
+    state.plan = plan.tracks;
+    state.transitions = plan.transitions;
+    state.duration = plan.duration;
+
+    // Just the folder's own name; a full path would run off the bar.
+    const name = (s.folder || '').replace(/[\/]+$/, '').split(/[\/]/).pop();
+    el('folder').textContent = name ? `· ${name}` : '';
+    if (s.folder) el('folder').title = s.folder;
+    el('setinfo').textContent = `${plan.tracks.length} tracks · ${fmt(plan.duration)}`;
+    el('total').textContent = fmt(plan.duration);
+    renderList();
+
+    ['play', 'next', 'toggle-list'].forEach((id) => { el(id).disabled = false; });
+    say('');
+    refresh();
+    if (!state.watching) { state.watching = true; watchFolder(); }
+  } catch (err) {
+    say('Cannot reach the server.', true);
+    setTimeout(waitForSet, 2000);
+  }
+}
+
+/* ------------------------------------------------------- folder changes */
+
+/* The set is built from the folder as it was at that moment, so files added
+   afterwards are invisible until it is rebuilt. Rather than make that the
+   listener's problem, the page watches for it: rebuild straight away if nothing
+   is playing, and otherwise offer the choice rather than cutting the music off
+   mid-track. */
+async function rebuild() {
+  el('rescan').hidden = true;
+  const wasPlaying = !audio.paused;
+  audio.pause();
+  say('Rebuilding the set…');
+  try {
+    await fetch('/api/rescan', { method: 'POST' });
+  } catch (err) { /* the poll below will surface anything that went wrong */ }
+  state.plan = null;
+  state.current = -1;
+  state.streamStart = 0;
+  audio.removeAttribute('src');
+  if (wasPlaying) say('Rebuilding the set… playback will restart.');
+  waitForSet();
+}
+
+async function watchFolder() {
+  try {
+    const s = await (await fetch('/api/status')).json();
+    if (s.stale && !s.busy) {
+      const extra = s.found - s.tracks;
+      const label = extra > 0 ? `${extra} new track${extra === 1 ? '' : 's'}`
+                              : 'folder changed';
+      if (audio.paused) {
+        // Nothing playing, so nothing to interrupt.
+        return rebuild();
+      }
+      el('rescan').hidden = false;
+      el('rescan').textContent = `${label} · rebuild`;
+    } else {
+      el('rescan').hidden = true;
+    }
+  } catch (err) { /* transient */ }
+  setTimeout(watchFolder, 3000);
+}
+
+el('rescan').addEventListener('click', rebuild);
+el('play').addEventListener('click', toggle);
+el('prev').addEventListener('click', () => skip(-1));
+el('next').addEventListener('click', () => skip(1));
+el('toggle-list').addEventListener('click', () => showList(!el('list').classList.contains('open')));
+el('close-list').addEventListener('click', () => showList(false));
+
+el('bar').addEventListener('click', (e) => {
+  if (!state.duration) return;
+  const r = el('bar').getBoundingClientRect();
+  playFrom(((e.clientX - r.left) / r.width) * state.duration, !audio.paused || !audio.src);
+});
+el('bar').addEventListener('keydown', (e) => {
+  const step = { ArrowLeft: -15, ArrowRight: 15 }[e.key];
+  if (step === undefined) return;
+  e.preventDefault();
+  playFrom(setTime() + step, !audio.paused);
+});
+
+audio.addEventListener('ended', () => {
+  setPlayingUI(false);
+  say('End of the set.');
+});
+audio.addEventListener('pause', () => setPlayingUI(false));
+audio.addEventListener('playing', () => setPlayingUI(true));
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space') { e.preventDefault(); toggle(); }
+  if (e.key === 'Escape') showList(false);
+});
+
+waitForSet();
+</script>
 </body>
 </html>
